@@ -1,7 +1,11 @@
 [package]
 name = "freeform"
 version = "0.1.0"
+repository = "https://github.com/Testare/n_dit_secret"
+authors = ["Testare <testare.i9z@gmail.com>"]
 edition = "2021"
+description = "A small library for being able to store free-form data"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
