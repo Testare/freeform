@@ -2,46 +2,58 @@ mod sede;
 mod sord;
 mod typed_sord;
 
-use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
 
 use bevy_reflect::Reflect;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use typed_key::Key;
 
-pub use sede::{Json, Ron, SeDe, SeDeAny, Toml};
+pub use sede::{Json, Ron, SeDe, Toml};
 pub use sord::{Sord, SordError};
 pub use typed_sord::TypedSord;
 
 pub use typed_key::typed_key;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, Reflect)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 #[serde(
     try_from = "HashMap<String, S::Value>",
     into = "HashMap<String, S::Value>"
 )]
-pub struct Freeform<S: SeDe = Json>(#[serde(skip)] PhantomData<S>, HashMap<String, String>);
+pub struct Freeform<S: SeDe = Json>(#[serde(skip)] i32, #[serde(bound(serialize="", deserialize=""))] HashMap<String, Sord<S>>);
 
 #[derive(Clone, Debug, Error)]
-pub enum FreeformErr {
+pub enum FreeformErr<S: SeDe> {
     #[error("error from serde_json in metadata: {0}")]
-    SerdeError(#[from] Arc<serde_json::error::Error>),
+    SerdeError(S::Error),
     #[error("required metadata key not found [{0}]")]
     RequiredKeyNotFound(String),
+    #[error("The key type doesn't match what was stored")]
+    KeyTypeDoesNotMatch,
 }
 
-impl From<serde_json::error::Error> for FreeformErr {
-    fn from(value: serde_json::error::Error) -> Self {
-        Self::SerdeError(Arc::new(value))
+impl <S: SeDe> From<&SordError<S>> for FreeformErr<S> {
+    fn from(value: &SordError<S>) -> Self {
+        match value {
+            SordError::WrongTypeError => FreeformErr::KeyTypeDoesNotMatch,
+            SordError::SeDeError(e) => FreeformErr::<S>::SerdeError(e.clone())
+        }
     }
 }
 
-type Result<T> = std::result::Result<T, FreeformErr>;
+impl <S: SeDe> From<SordError<S>> for FreeformErr<S> {
+    fn from(value: SordError<S>) -> Self {
+        match value {
+            SordError::WrongTypeError => FreeformErr::KeyTypeDoesNotMatch,
+            SordError::SeDeError(e) => FreeformErr::<S>::SerdeError(e)
+        }
+    }
+}
+
 
 impl<S: SeDe> Freeform<S> {
+
     pub fn is_empty(&self) -> bool {
         self.1.is_empty()
     }
@@ -50,88 +62,91 @@ impl<S: SeDe> Freeform<S> {
         Self::default()
     }
 
-    pub fn get_optional<'a, T: Deserialize<'a>>(&'a self, key: Key<T>) -> Result<Option<T>> {
-        if let Some(value_str) = self.1.get(&key.name().to_string()) {
-            Ok(Some(serde_json::from_str(value_str)?))
+    pub fn get_optional<T: DeserializeOwned + Sync + Send + 'static>(&self, key: Key<T>) -> Result<Option<&T>, FreeformErr<S>> {
+        if let Some(value_sord) = self.1.get(&key.name().to_string()) {
+            Ok(Some(value_sord.de::<T>()?))
         } else {
             Ok(None)
         }
     }
 
-    pub fn get_or_default<'a, T: Deserialize<'a> + Default>(&'a self, key: Key<T>) -> Result<T> {
-        self.get_optional(key).map(|opt| opt.unwrap_or_default())
+    pub fn get_owned_or_default<T: DeserializeOwned + Sync + Send + 'static + ToOwned>(&self, key: Key<T>) -> Result<T::Owned, FreeformErr<S>>
+        where T::Owned: Default {
+        self.get_optional(key).map(|opt| opt.map(|t|t.to_owned()).unwrap_or_default())
     }
 
-    pub fn get_required<'a, T: Deserialize<'a>>(&'a self, key: Key<T>) -> Result<T> {
-        if let Some(value_str) = self.1.get(&key.name().to_string()) {
-            Ok(serde_json::from_str(value_str)?)
+    pub fn get_cloned_or_default<T: DeserializeOwned + Sync + Send + 'static + Clone + Default>(&self, key: Key<T>) -> Result<T, FreeformErr<S>> {
+        self.get_optional(key).map(|opt| opt.cloned().unwrap_or_default())
+    }
+
+    pub fn get_required<T: DeserializeOwned + Sync + Send + 'static>(&self, key: Key<T>) -> Result<&T, FreeformErr<S>> {
+        if let Some(value_sord) = self.1.get(&key.name().to_string()) {
+            Ok(value_sord.de::<T>()?)
         } else {
             Err(FreeformErr::RequiredKeyNotFound(key.name().to_owned()))
         }
     }
 
-    pub fn get_field_optional<'a, T: Deserialize<'a>>(&'a self, field: &str) -> Result<Option<T>> {
-        if let Some(value_str) = self.1.get(&field.to_string()) {
-            Ok(Some(serde_json::from_str(value_str)?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get_field_or_default<'a, T: Deserialize<'a> + Default>(
-        &'a self,
-        field: &str,
-    ) -> Result<T> {
-        if let Some(value_str) = self.1.get(&field.to_string()) {
-            Ok(serde_json::from_str(value_str)?)
-        } else {
-            Ok(Default::default())
-        }
-    }
-
-    pub fn get_field_required<'a, T: Deserialize<'a>>(&'a self, field: &str) -> Result<T> {
-        if let Some(value_str) = self.1.get(field) {
-            Ok(serde_json::from_str(value_str)?)
-        } else {
-            Err(FreeformErr::RequiredKeyNotFound(field.to_owned()))
-        }
-    }
-
-    pub fn put<T: Serialize, B: Borrow<T>>(&mut self, key: Key<T>, data: B) -> Result<()> {
-        let data_str = serde_json::to_string(data.borrow())?;
-        self.1.insert(key.name().to_string(), data_str);
+    pub fn put<T: Serialize + Sync + Send + 'static>(&mut self, key: Key<T>, data: T) -> Result<(), FreeformErr<S>> {
+        let sord_data = Sord::from_de::<T>(data);
+        self.1.insert(key.name().to_string(), sord_data);
         Ok(())
     }
 
-    pub fn put_field<T: Serialize, B: Borrow<T>>(&mut self, field: &str, data: B) -> Result<()> {
-        let data_str = serde_json::to_string(data.borrow())?;
-        self.1.insert(field.to_string(), data_str);
+    /// Puts a value by ref by serializing and storing that way
+    pub fn put_ref<T: Serialize + Sync + Send + 'static>(&mut self, key: Key<T>, data: &T) -> Result<(), FreeformErr<S>> {
+        let sord_data = Sord::from_de_ref::<T>(data)?;
+        self.1.insert(key.name().to_string(), sord_data);
         Ok(())
     }
 
     /// Puts the data if the option is Some, else it does nothing
-    pub fn put_optional<T: Serialize, O: Borrow<Option<T>>>(
+    pub fn put_optional<T: Serialize + Sync + Send + 'static>(
         &mut self,
         key: Key<T>,
-        data: O,
-    ) -> Result<()> {
-        if let Some(data_unwrapped) = data.borrow().as_ref() {
+        data: Option<T>,
+    ) -> Result<(), FreeformErr<S>> {
+        if let Some(data_unwrapped) = data {
             self.put(key, data_unwrapped)
         } else {
             Ok(())
         }
     }
 
-    // Possible future improvement: Trait object IsEmpty, implemented for metadata, hashmap, and Vec?
-    pub fn put_nonempty<T: Serialize, V: Borrow<Vec<T>>>(
+    pub fn put_optional_ref<T: Serialize + Sync + Send + 'static>(
+        &mut self,
+        key: Key<T>,
+        data: Option<&T>,
+    ) -> Result<(), FreeformErr<S>> {
+        if let Some(data_unwrapped) = data {
+            self.put_ref(key, data_unwrapped)
+        } else {
+            Ok(())
+        }
+    }
+
+    // TODO Possible future improvement: Trait object IsEmpty, implemented for metadata, hashmap, and Vec?
+    pub fn put_nonempty<T: Serialize + Send + Sync + 'static>(
         &mut self,
         key: Key<Vec<T>>,
-        data: V,
-    ) -> Result<()> {
-        if data.borrow().is_empty() {
+        data: Vec<T>,
+    ) -> Result<(), FreeformErr<S>> {
+        if data.is_empty() {
             Ok(())
         } else {
-            self.put(key, data.borrow())
+            self.put(key, data)
+        }
+    }
+
+    pub fn put_nonempty_ref<T: Serialize + Send + Sync + 'static>(
+        &mut self,
+        key: Key<Vec<T>>,
+        data: &Vec<T>,
+    ) -> Result<(), FreeformErr<S>> {
+        if data.is_empty() {
+            Ok(())
+        } else {
+            self.put_ref(key, data)
         }
     }
 
@@ -144,28 +159,28 @@ impl<S: SeDe> Freeform<S> {
 }
 
 impl<S: SeDe> IntoIterator for Freeform<S> {
-    type IntoIter = std::collections::hash_map::IntoIter<String, String>;
-    type Item = (String, String);
+    type IntoIter = std::collections::hash_map::IntoIter<String, Sord<S>>;
+    type Item = (String, Sord<S>);
     fn into_iter(self) -> Self::IntoIter {
         self.1.into_iter()
     }
 }
 
-impl<S: SeDe> Extend<(String, String)> for Freeform<S> {
-    fn extend<T: IntoIterator<Item = (String, String)>>(&mut self, iter: T) {
+impl<S: SeDe> Extend<(String, Sord<S>)> for Freeform<S> {
+    fn extend<T: IntoIterator<Item = (String, Sord<S>)>>(&mut self, iter: T) {
         self.1.extend(iter)
     }
 }
 
-// NOCOMMIT flip to TryFrom
 impl<S: SeDe> TryFrom<HashMap<String, S::Value>> for Freeform<S> {
-    type Error = S::Error;
-    fn try_from(map: HashMap<String, S::Value>) -> std::result::Result<Self, S::Error> {
-        let converted_map = map
+    type Error = FreeformErr<S>;
+    fn try_from(map: HashMap<String, S::Value>) -> std::result::Result<Self, Self::Error> {
+        let converted_map= map
             .into_iter()
-            .map(|(key, val)| Ok((key, S::serialize(&val)?)))
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(Freeform(PhantomData::<S>, converted_map))
+            .map(|(key, val)| Ok((key, Sord::<S>::from_value(&val)?)))
+            .collect::<std::result::Result<_, Self::Error>>()?;
+
+        Ok(Freeform(0, converted_map))
     }
 }
 
@@ -177,8 +192,7 @@ impl<S: SeDe> From<Freeform<S>> for HashMap<String, S::Value> {
             .map(|(key, val)| {
                 (
                     key,
-                    S::deserialize(val.as_str())
-                        .expect("expect serialized types to be able to convert to value"),
+                    val.value().expect("Should be able to serialize")
                 )
             })
             .collect()
@@ -211,9 +225,9 @@ mod test {
         let mut freeform = <Freeform>::new();
         let ff_key: Key<Freeform> = typed_key!("ff");
         freeform.put(NUM_KEY, 343).unwrap();
-        freeform.put(MAP_KEY, &test_map()).unwrap();
+        freeform.put(MAP_KEY, test_map()).unwrap();
         freeform
-            .put(ff_key, &{
+            .put(ff_key, {
                 let mut metadata = Freeform::new();
                 metadata.put(NUM_KEY, 143).unwrap();
                 metadata
@@ -286,5 +300,11 @@ mod test {
         let serialized = ron::to_string(&freeform).unwrap();
         let ron_value: ron::Value = ron::from_str(serialized.as_str()).unwrap();
         assert_eq!(ron::Value::Map(expected_ron), ron_value);
+
+        assert_eq!(&62, freeform.get_required(NUM_KEY).unwrap());
+        assert_eq!(&test_map(), freeform.get_required(MAP_KEY).unwrap());
+        let inner_freeform = freeform.get_required(ff_key).unwrap();
+        assert_eq!(Some(&143), inner_freeform.get_optional(NUM_KEY).unwrap());
+        assert_eq!(None, inner_freeform.get_optional(MAP_KEY).unwrap());
     }
 }

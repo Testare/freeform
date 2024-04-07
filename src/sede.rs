@@ -1,33 +1,45 @@
+use std::any::Any;
+use std::borrow::Borrow;
+use std::sync::Arc;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use thiserror::Error;
 
-pub trait SeDe: Clone + Default {
-    type Error: std::fmt::Debug + std::fmt::Display;
+pub trait SeDe: Clone + std::fmt::Debug + Default {
+    type Error: std::fmt::Debug + std::fmt::Display + Clone;
     type Value: DeserializeOwned + Serialize;
 
     fn deserialize<T: DeserializeOwned>(input: &str) -> Result<T, Self::Error>;
     fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error>;
+
+    /// # Safety
+    /// Should only be called in sitatuions where we KNOW de is type T
+    unsafe fn serialize_as_any<T: Serialize + 'static + Send + Sync>(input: &Arc<dyn Any + Send + Sync + 'static>) -> Result<String, Self::Error> {
+        Self::serialize::<T>(input.clone().downcast::<T>().expect("this method should not be called unless we are sure the downcast will be successful").borrow())
+    }
 }
 
 pub trait SeDeAny {}
 
-#[derive(Clone, Default)]
+impl<T: Serialize + DeserializeOwned> SeDeAny for T {}
+
+#[derive(Clone, Debug, Default)]
 pub struct Json;
 
 impl SeDe for Json {
-    type Error = serde_json::Error;
+    type Error = Arc<serde_json::Error>;
     type Value = serde_json::Value;
     fn deserialize<'a, T: DeserializeOwned>(input: &str) -> Result<T, Self::Error> {
-        serde_json::from_str(input)
+        serde_json::from_str(input).map_err( Arc::new)
     }
 
     fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error> {
-        serde_json::to_string(input)
+        serde_json::to_string(input).map_err(Arc::new)
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Ron;
 
 impl SeDe for Ron {
@@ -43,10 +55,10 @@ impl SeDe for Ron {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Toml;
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum TomlError {
     #[error(transparent)]
     De(#[from] toml::de::Error),
