@@ -1,4 +1,4 @@
-use super::SeDe;
+use super::SerdeScheme;
 
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -8,12 +8,12 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 #[derive(Debug)]
-pub struct TypedSord<T, S: SeDe> {
+pub struct TypedSord<T, S: SerdeScheme> {
     pub(crate) se: OnceLock<Result<String, S::Error>>,
     pub(crate) de: OnceLock<Result<T, S::Error>>,
 }
 
-impl<T: DeserializeOwned + Serialize, S: SeDe> TypedSord<T, S> {
+impl<T: DeserializeOwned + Serialize, S: SerdeScheme> TypedSord<T, S> {
     pub fn from_se<K>(se: K) -> Self
     where
         K: ToString,

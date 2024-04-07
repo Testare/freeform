@@ -1,5 +1,4 @@
-use super::{SeDe, TypedSord};
-// Experimental Mod
+use super::{SerdeScheme, TypedSord};
 
 use std::any::Any;
 use std::borrow::Borrow;
@@ -9,22 +8,21 @@ use std::sync::{Arc, OnceLock};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-
 #[derive(Clone, Debug)]
 #[allow(clippy::type_complexity)]
-pub struct Sord<S: SeDe> {
+pub struct Sord<S: SerdeScheme> {
     se: OnceLock<Result<String, SordError<S>>>,
     de: OnceLock<Result<Arc<dyn Any + 'static + Send + Sync>, SordError<S>>>,
-    se_fn: Option<unsafe fn(&Arc<dyn Any + 'static + Send + Sync>) -> Result<String, S::Error>>
+    se_fn: Option<unsafe fn(&Arc<dyn Any + 'static + Send + Sync>) -> Result<String, S::Error>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SordError<S: SeDe> {
+pub enum SordError<S: SerdeScheme> {
     SeDeError(S::Error),
     WrongTypeError,
 }
 
-impl<S: SeDe> Sord<S> {
+impl<S: SerdeScheme> Sord<S> {
     pub fn from_de_ref<T: 'static + Send + Sync + Serialize>(de: &T) -> Result<Self, SordError<S>> {
         let se = S::serialize::<T>(de).map_err(SordError::SeDeError)?;
         Ok(Sord {
@@ -99,7 +97,9 @@ impl<S: SeDe> Sord<S> {
             let se_str = unsafe {
                 // SAEFTY: de is only initialized without se being initialized with de,
                 // and this function is only populated in that case
-                self.se_fn.expect("se_fn should be created initialized with de")(de).map_err(SordError::SeDeError)?
+                self.se_fn
+                    .expect("se_fn should be created initialized with de")(de)
+                .map_err(SordError::SeDeError)?
             };
             S::deserialize(se_str.as_str()).map_err(SordError::SeDeError)
         } else {

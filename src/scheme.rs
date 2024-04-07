@@ -6,32 +6,44 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use thiserror::Error;
 
-pub trait SeDe: Clone + std::fmt::Debug + Default {
+/// A trait indicating a scheme for seralizing and deserializing data using Serde
+///
+/// Can be implmented for other serialization schemes, then create a Freeform<Scheme> to
+/// use that scheme for serializing data
+pub trait SerdeScheme: Clone + std::fmt::Debug + Default {
+    /// Errors that can be returned from serializing/deserializing.
     type Error: std::fmt::Debug + std::fmt::Display + Clone;
+    /// The native "value" representation for the scheme. Used when
+    /// serializing/deserializing the freeform as a whole so that
+    /// the values aren't stored as strings
     type Value: DeserializeOwned + Serialize;
 
+    /// Deserialize a string into a T
     fn deserialize<T: DeserializeOwned>(input: &str) -> Result<T, Self::Error>;
+    /// Serialize a T into a string
     fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error>;
 
+    /// Used for Freeform internals, default implementation should be sufficient
+    ///
     /// # Safety
     /// Should only be called in sitatuions where we KNOW de is type T
-    unsafe fn serialize_as_any<T: Serialize + 'static + Send + Sync>(input: &Arc<dyn Any + Send + Sync + 'static>) -> Result<String, Self::Error> {
+    ///
+    unsafe fn serialize_as_any<T: Serialize + 'static + Send + Sync>(
+        input: &Arc<dyn Any + Send + Sync + 'static>,
+    ) -> Result<String, Self::Error> {
         Self::serialize::<T>(input.clone().downcast::<T>().expect("this method should not be called unless we are sure the downcast will be successful").borrow())
     }
 }
 
-pub trait SeDeAny {}
-
-impl<T: Serialize + DeserializeOwned> SeDeAny for T {}
-
 #[derive(Clone, Debug, Default)]
 pub struct Json;
 
-impl SeDe for Json {
+impl SerdeScheme for Json {
+    // Using an Arc because serde_json doesn't implement Clone
     type Error = Arc<serde_json::Error>;
     type Value = serde_json::Value;
     fn deserialize<'a, T: DeserializeOwned>(input: &str) -> Result<T, Self::Error> {
-        serde_json::from_str(input).map_err( Arc::new)
+        serde_json::from_str(input).map_err(Arc::new)
     }
 
     fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error> {
@@ -42,7 +54,7 @@ impl SeDe for Json {
 #[derive(Clone, Debug, Default)]
 pub struct Ron;
 
-impl SeDe for Ron {
+impl SerdeScheme for Ron {
     type Error = ron::Error;
     type Value = ron::Value;
 
@@ -58,6 +70,7 @@ impl SeDe for Ron {
 #[derive(Clone, Debug, Default)]
 pub struct Toml;
 
+/// Toml has different error types for serializing and deserializing, this wraps both of them
 #[derive(Clone, Debug, Error)]
 pub enum TomlError {
     #[error(transparent)]
@@ -66,7 +79,7 @@ pub enum TomlError {
     Ser(#[from] toml::ser::Error),
 }
 
-impl SeDe for Toml {
+impl SerdeScheme for Toml {
     type Error = TomlError;
     type Value = toml::Value;
     fn deserialize<T: DeserializeOwned>(input: &str) -> Result<T, Self::Error> {
