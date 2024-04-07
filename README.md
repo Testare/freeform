@@ -32,4 +32,3 @@ In the future, there are a number of optimizations I would like to implement.
 
 * `FreeformData: 'static` to `FreeformData<'a>`
 * `Svord<S: SerdeScheme>` (Stores `S::Value` as well)
-* `ron` and `toml` features to reduce unneeded dependencies

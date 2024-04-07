@@ -6,15 +6,28 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use typed_key::Key;
 
-use crate::{Json, SerdeScheme};
+#[cfg(feature = "json")]
+use crate::Json;
+use crate::SerdeScheme;
 use crate::{Sord, SordError};
 
+#[cfg(feature = "json")]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 #[serde(
     try_from = "HashMap<String, S::Value>",
     into = "HashMap<String, S::Value>"
 )]
 pub struct Freeform<S: SerdeScheme = Json>(
+    #[serde(bound(serialize = "", deserialize = ""))] HashMap<String, Sord<S>>,
+);
+
+#[cfg(not(feature = "json"))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Reflect)]
+#[serde(
+    try_from = "HashMap<String, S::Value>",
+    into = "HashMap<String, S::Value>"
+)]
+pub struct Freeform<S: SerdeScheme>(
     #[serde(bound(serialize = "", deserialize = ""))] HashMap<String, Sord<S>>,
 );
 
@@ -214,13 +227,15 @@ impl<S: SerdeScheme> From<Freeform<S>> for HashMap<String, S::Value> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "json", feature = "toml", feature = "ron")))]
 mod test {
+    #[cfg(feature = "json")]
     use serde_json::{Map, Number, Value};
     use std::collections::HashMap;
 
     use typed_key::{typed_key, Key};
 
+    #[cfg(feature = "ron")]
     use crate::scheme::Ron;
 
     use super::Freeform;
@@ -236,6 +251,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     pub fn basic_test() {
         let mut freeform = <Freeform>::new();
         let ff_key: Key<Freeform> = typed_key!("ff");
@@ -268,6 +284,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "ron")]
     pub fn ron_test() {
         let mut freeform = <Freeform<Ron>>::new();
         let ff_key: Key<Freeform<Ron>> = typed_key!("ff");

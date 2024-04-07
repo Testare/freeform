@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+#[cfg(feature = "toml")]
 use thiserror::Error;
 
 /// A trait indicating a scheme for seralizing and deserializing data using Serde
@@ -35,9 +36,11 @@ pub trait SerdeScheme: Clone + std::fmt::Debug + Default {
     }
 }
 
+#[cfg(feature = "json")]
 #[derive(Clone, Debug, Default)]
 pub struct Json;
 
+#[cfg(feature = "json")]
 impl SerdeScheme for Json {
     // Using an Arc because serde_json doesn't implement Clone
     type Error = Arc<serde_json::Error>;
@@ -51,9 +54,11 @@ impl SerdeScheme for Json {
     }
 }
 
+#[cfg(feature = "ron")]
 #[derive(Clone, Debug, Default)]
 pub struct Ron;
 
+#[cfg(feature = "ron")]
 impl SerdeScheme for Ron {
     type Error = ron::Error;
     type Value = ron::Value;
@@ -67,10 +72,12 @@ impl SerdeScheme for Ron {
     }
 }
 
+#[cfg(feature = "toml")]
 #[derive(Clone, Debug, Default)]
 pub struct Toml;
 
 /// Toml has different error types for serializing and deserializing, this wraps both of them
+#[cfg(feature = "toml")]
 #[derive(Clone, Debug, Error)]
 pub enum TomlError {
     #[error(transparent)]
@@ -79,6 +86,7 @@ pub enum TomlError {
     Ser(#[from] toml::ser::Error),
 }
 
+#[cfg(feature = "toml")]
 impl SerdeScheme for Toml {
     type Error = TomlError;
     type Value = toml::Value;

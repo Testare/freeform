@@ -141,7 +141,7 @@ impl<S: SerdeScheme> Sord<S> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "json"))]
 mod test {
     use serde::Deserialize;
 
@@ -164,6 +164,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn sord_testing_from_de() {
         let sord = Sord::<Json>::from_de(test_obj());
         assert_eq!(
@@ -182,6 +183,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn sord_testing_from_se() {
         let sord = Sord::<Json>::from_se(SERIALIZED);
         assert_eq!(

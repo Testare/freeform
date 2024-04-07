@@ -1,6 +1,6 @@
 [package]
 name = "freeform"
-version = "0.2.0"
+version = "0.3.0"
 repository = "https://github.com/Testare/n_dit_secret"
 authors = ["Testare <testare.i9z@gmail.com>"]
 edition = "2021"
@@ -11,9 +11,16 @@ license = "MIT"
 
 [dependencies]
 bevy_reflect = "0.13.2"
-ron = "0.8.1"
 serde = {version = "1.0.197", features = ["derive"]}
-serde_json = "1.0.115"
 thiserror = "1.0.58"
-toml = "0.8.12"
 typed_key = "0.1.1"
+ron = { version = "0.8.1", optional = true }
+serde_json = { version = "1.0.115", optional = true }
+toml = { version = "0.8.12", optional = true }
+
+[features]
+default = ["json"]
+json = ["dep:serde_json"]
+ron = ["dep:ron"]
+toml = ["dep:toml"]
+
