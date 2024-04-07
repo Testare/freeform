@@ -1,18 +1,24 @@
+mod sede;
+
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bevy_reflect::Reflect;
+pub use sede::{Json, Ron, SeDe, Toml};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 use typed_key::Key;
 
 pub use typed_key::typed_key;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, Reflect)]
-#[serde(from = "HashMap<String, Value>", into = "HashMap<String, Value>")]
-pub struct Freeform(HashMap<String, String>);
+#[serde(
+    try_from = "HashMap<String, S::Value>",
+    into = "HashMap<String, S::Value>"
+)]
+pub struct Freeform<S: SeDe = Json>(#[serde(skip)] PhantomData<S>, HashMap<String, String>);
 
 #[derive(Clone, Debug, Error)]
 pub enum FreeformErr {
@@ -30,17 +36,17 @@ impl From<serde_json::error::Error> for FreeformErr {
 
 type Result<T> = std::result::Result<T, FreeformErr>;
 
-impl Freeform {
+impl<S: SeDe> Freeform<S> {
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.1.is_empty()
     }
 
     pub fn new() -> Self {
-        Freeform::default()
+        Self::default()
     }
 
     pub fn get_optional<'a, T: Deserialize<'a>>(&'a self, key: Key<T>) -> Result<Option<T>> {
-        if let Some(value_str) = self.0.get(&key.name().to_string()) {
+        if let Some(value_str) = self.1.get(&key.name().to_string()) {
             Ok(Some(serde_json::from_str(value_str)?))
         } else {
             Ok(None)
@@ -52,7 +58,7 @@ impl Freeform {
     }
 
     pub fn get_required<'a, T: Deserialize<'a>>(&'a self, key: Key<T>) -> Result<T> {
-        if let Some(value_str) = self.0.get(&key.name().to_string()) {
+        if let Some(value_str) = self.1.get(&key.name().to_string()) {
             Ok(serde_json::from_str(value_str)?)
         } else {
             Err(FreeformErr::RequiredKeyNotFound(key.name().to_owned()))
@@ -60,7 +66,7 @@ impl Freeform {
     }
 
     pub fn get_field_optional<'a, T: Deserialize<'a>>(&'a self, field: &str) -> Result<Option<T>> {
-        if let Some(value_str) = self.0.get(&field.to_string()) {
+        if let Some(value_str) = self.1.get(&field.to_string()) {
             Ok(Some(serde_json::from_str(value_str)?))
         } else {
             Ok(None)
@@ -71,7 +77,7 @@ impl Freeform {
         &'a self,
         field: &str,
     ) -> Result<T> {
-        if let Some(value_str) = self.0.get(&field.to_string()) {
+        if let Some(value_str) = self.1.get(&field.to_string()) {
             Ok(serde_json::from_str(value_str)?)
         } else {
             Ok(Default::default())
@@ -79,7 +85,7 @@ impl Freeform {
     }
 
     pub fn get_field_required<'a, T: Deserialize<'a>>(&'a self, field: &str) -> Result<T> {
-        if let Some(value_str) = self.0.get(field) {
+        if let Some(value_str) = self.1.get(field) {
             Ok(serde_json::from_str(value_str)?)
         } else {
             Err(FreeformErr::RequiredKeyNotFound(field.to_owned()))
@@ -88,13 +94,13 @@ impl Freeform {
 
     pub fn put<T: Serialize, B: Borrow<T>>(&mut self, key: Key<T>, data: B) -> Result<()> {
         let data_str = serde_json::to_string(data.borrow())?;
-        self.0.insert(key.name().to_string(), data_str);
+        self.1.insert(key.name().to_string(), data_str);
         Ok(())
     }
 
     pub fn put_field<T: Serialize, B: Borrow<T>>(&mut self, field: &str, data: B) -> Result<()> {
         let data_str = serde_json::to_string(data.borrow())?;
-        self.0.insert(field.to_string(), data_str);
+        self.1.insert(field.to_string(), data_str);
         Ok(())
     }
 
@@ -124,47 +130,50 @@ impl Freeform {
         }
     }
 
-    pub fn aggregate<M: IntoIterator<Item = Freeform>>(metadata: M) -> Option<Self> {
-        metadata.into_iter().reduce(|mut acm, effects| {
+    pub fn aggregate<F: IntoIterator<Item = Self>>(freeform: F) -> Option<Self> {
+        freeform.into_iter().reduce(|mut acm, effects| {
             acm.extend(effects);
             acm
         })
     }
 }
 
-impl IntoIterator for Freeform {
+impl<S: SeDe> IntoIterator for Freeform<S> {
     type IntoIter = std::collections::hash_map::IntoIter<String, String>;
     type Item = (String, String);
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.1.into_iter()
     }
 }
 
-impl Extend<(String, String)> for Freeform {
+impl<S: SeDe> Extend<(String, String)> for Freeform<S> {
     fn extend<T: IntoIterator<Item = (String, String)>>(&mut self, iter: T) {
-        self.0.extend(iter)
+        self.1.extend(iter)
     }
 }
 
-impl From<HashMap<String, Value>> for Freeform {
-    fn from(map: HashMap<String, Value>) -> Self {
-        Freeform(
-            map.into_iter()
-                .map(|(key, val)| (key, val.to_string()))
-                .collect(),
-        )
+// NOCOMMIT flip to TryFrom
+impl<S: SeDe> TryFrom<HashMap<String, S::Value>> for Freeform<S> {
+    type Error = S::Error;
+    fn try_from(map: HashMap<String, S::Value>) -> std::result::Result<Self, S::Error> {
+        let converted_map = map
+            .into_iter()
+            .map(|(key, val)| Ok((key, S::serialize(&val)?)))
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(Freeform(PhantomData::<S>, converted_map))
     }
 }
 
-impl From<Freeform> for HashMap<String, Value> {
-    fn from(metadata: Freeform) -> Self {
+impl<S: SeDe> From<Freeform<S>> for HashMap<String, S::Value> {
+    fn from(metadata: Freeform<S>) -> Self {
         metadata
-            .0
+            .1
             .into_iter()
             .map(|(key, val)| {
                 (
                     key,
-                    serde_json::from_str(&val).expect("Freeform should not store escaped strings"),
+                    S::deserialize(val.as_str())
+                        .expect("expect serialized types to be able to convert to value"),
                 )
             })
             .collect()
@@ -178,49 +187,99 @@ mod test {
 
     use typed_key::{typed_key, Key};
 
+    use crate::sede::Ron;
+
     use super::Freeform;
+
+    const NUM_KEY: Key<usize> = typed_key!("num");
+    const MAP_KEY: Key<HashMap<String, String>> = typed_key!("map");
+
+    fn test_map() -> HashMap<String, String> {
+        [("foo", "FOO"), ("bar", "BAR"), ("hello", "bonjour")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
 
     #[test]
     pub fn basic_test() {
-        let mut freeform = Freeform::new();
-        let u_key: Key<usize> = typed_key!("u_key");
-        let inner_hashmap_key: Key<HashMap<String, String>> = typed_key!("inner_hashmap");
-        let inner_freeform_key: Key<Freeform> = typed_key!("inner_freeform");
-        let mut hashmap: HashMap<String, String> = HashMap::new();
-        hashmap.insert("what".to_string(), "hey".to_string());
-        hashmap.insert("whata".to_string(), "hey".to_string());
-        hashmap.insert("foo".to_string(), "bar".to_string());
-        freeform.put(u_key, 343).unwrap();
-        freeform.put(inner_hashmap_key, &hashmap).unwrap();
+        let mut freeform = <Freeform>::new();
+        let ff_key: Key<Freeform> = typed_key!("ff");
+        freeform.put(NUM_KEY, 343).unwrap();
+        freeform.put(MAP_KEY, &test_map()).unwrap();
         freeform
-            .put(inner_freeform_key, &{
+            .put(ff_key, &{
                 let mut metadata = Freeform::new();
-                metadata.put(u_key, 143).unwrap();
+                metadata.put(NUM_KEY, 143).unwrap();
                 metadata
             })
             .unwrap();
 
         let mut inner_freeform_map = Map::new();
-        inner_freeform_map.insert(u_key.name().to_string(), Value::Number(Number::from(143)));
+        inner_freeform_map.insert(NUM_KEY.name().to_string(), Value::Number(Number::from(143)));
 
         let mut hashmap_value = Map::new();
-        hashmap_value.insert("what".to_string(), Value::String("hey".to_string()));
-        hashmap_value.insert("whata".to_string(), Value::String("hey".to_string()));
-        hashmap_value.insert("foo".to_string(), Value::String("bar".to_string()));
+        hashmap_value.insert("foo".to_string(), Value::String("FOO".to_string()));
+        hashmap_value.insert("bar".to_string(), Value::String("BAR".to_string()));
+        hashmap_value.insert("hello".to_string(), Value::String("bonjour".to_string()));
 
         let mut expected_map = Map::new();
-        expected_map.insert(u_key.name().to_string(), Value::Number(Number::from(343)));
-        expected_map.insert(
-            inner_hashmap_key.name().to_string(),
-            Value::Object(hashmap_value),
-        );
-        expected_map.insert(
-            inner_freeform_key.name().to_string(),
-            Value::Object(inner_freeform_map),
-        );
+        expected_map.insert(NUM_KEY.name().to_string(), Value::Number(Number::from(343)));
+        expected_map.insert(MAP_KEY.name().to_string(), Value::Object(hashmap_value));
+        expected_map.insert(ff_key.name().to_string(), Value::Object(inner_freeform_map));
 
         let result = serde_json::to_value(&freeform).unwrap();
 
         assert_eq!(Value::Object(expected_map), result);
+    }
+
+    #[test]
+    pub fn ron_test() {
+        let mut freeform = <Freeform<Ron>>::new();
+        let ff_key: Key<Freeform<Ron>> = typed_key!("ff");
+
+        freeform.put(NUM_KEY, 62).unwrap();
+        freeform.put(MAP_KEY, test_map()).unwrap();
+        let mut ff: Freeform<Ron> = Freeform::new();
+        ff.put(NUM_KEY, 143).unwrap();
+        freeform.put(ff_key, ff).unwrap();
+
+        let mut expected_map = ron::Map::new();
+        expected_map.insert(
+            ron::Value::String("foo".to_string()),
+            ron::Value::String("FOO".to_string()),
+        );
+        expected_map.insert(
+            ron::Value::String("bar".to_string()),
+            ron::Value::String("BAR".to_string()),
+        );
+        expected_map.insert(
+            ron::Value::String("hello".to_string()),
+            ron::Value::String("bonjour".to_string()),
+        );
+
+        let mut expected_ff = ron::Map::new();
+        expected_ff.insert(
+            ron::Value::String(NUM_KEY.name().to_string()),
+            ron::Value::Number(ron::Number::Integer(143)),
+        );
+
+        let mut expected_ron = ron::Map::new();
+        expected_ron.insert(
+            ron::Value::String(NUM_KEY.name().to_string()),
+            ron::Value::Number(ron::Number::Integer(62)),
+        );
+        expected_ron.insert(
+            ron::Value::String(MAP_KEY.name().to_string()),
+            ron::Value::Map(expected_map),
+        );
+        expected_ron.insert(
+            ron::Value::String(ff_key.name().to_string()),
+            ron::Value::Map(expected_ff),
+        );
+
+        let serialized = ron::to_string(&freeform).unwrap();
+        let ron_value: ron::Value = ron::from_str(serialized.as_str()).unwrap();
+        assert_eq!(ron::Value::Map(expected_ron), ron_value);
     }
 }
