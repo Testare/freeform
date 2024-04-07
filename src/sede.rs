@@ -10,6 +10,8 @@ pub trait SeDe: Clone + Default {
     fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error>;
 }
 
+pub trait SeDeAny {}
+
 #[derive(Clone, Default)]
 pub struct Json;
 

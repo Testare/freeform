@@ -1,3 +1,4 @@
+use super::{SeDe, SeDeAny, TypedSord};
 // Experimental Mod
 
 use std::any::Any;
@@ -8,77 +9,10 @@ use std::sync::OnceLock;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-pub trait SeDe {
-    type Error;
-    fn deserialize<T: DeserializeOwned>(input: &str) -> Result<T, Self::Error>;
-    fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error>;
-}
-
-#[derive(Debug)]
-pub struct TypedSord<T, S: SeDe> {
-    se: OnceLock<Result<String, S::Error>>,
-    de: OnceLock<Result<T, S::Error>>,
-}
-
-impl<T: DeserializeOwned + Serialize, S: SeDe> TypedSord<T, S>
-where
-    <S as SeDe>::Error: Debug,
-{
-    pub fn from_se<K>(se: K) -> Self
-    where
-        K: ToString,
-    {
-        let se: String = se.to_string();
-        TypedSord {
-            se: OnceLock::from(Ok(se)),
-            de: OnceLock::new(),
-        }
-    }
-
-    pub fn from_de(de: T) -> Self {
-        TypedSord {
-            se: OnceLock::new(),
-            de: OnceLock::from(Ok(de)),
-        }
-    }
-
-    pub fn de(&self) -> Result<&T, &S::Error> {
-        let se = &self.se;
-        self.de
-            .get_or_init(|| {
-                let se = se
-                    .get()
-                    .expect("should not be possible for both se and de to be uninitialized")
-                    .as_ref()
-                    .expect("should not be possible to initialize se as an error");
-                S::deserialize(se)
-            })
-            .as_ref()
-    }
-
-    pub fn se(&self) -> Result<&str, &S::Error> {
-        let de = &self.de;
-        let m = self
-            .se
-            .get_or_init(|| {
-                let de = de
-                    .get()
-                    .expect("should not be possible for both de and se to be uninitialized")
-                    .as_ref()
-                    .expect("should not be possible to initialize de as an error");
-                S::serialize(de)
-            })
-            .as_ref()
-            .map(|cow| cow.borrow());
-        m
-    }
-}
-
-trait SeDeAny {}
-
 impl<T: Serialize + DeserializeOwned> SeDeAny for T {}
 
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct Sord<S: SeDe> {
     se: OnceLock<Result<String, SordError<S::Error>>>,
     de: OnceLock<Result<Box<dyn Any>, SordError<S::Error>>>,
@@ -90,10 +24,7 @@ pub enum SordError<E> {
     WrongTypeError,
 }
 
-impl<S: SeDe> Sord<S>
-where
-    <S as SeDe>::Error: Debug,
-{
+impl<S: SeDe> Sord<S> {
     pub fn from_de<T: 'static>(de: T) -> Self {
         Sord {
             se: OnceLock::new(),
@@ -162,7 +93,7 @@ where
                     } else {
                         return None;
                     }
-                },
+                }
                 Err(SordError::WrongTypeError) => return None,
                 Err(SordError::SeDeError(err)) => OnceLock::from(Err(err)),
             }
@@ -173,24 +104,12 @@ where
     }
 }
 
-struct Json;
-
-impl SeDe for Json {
-    type Error = serde_json::Error;
-    fn deserialize<'a, T: DeserializeOwned>(input: &str) -> Result<T, Self::Error> {
-        serde_json::from_str(input)
-    }
-
-    fn serialize<T: Serialize>(input: &T) -> Result<String, Self::Error> {
-        serde_json::to_string(input)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use serde::Deserialize;
 
     use super::*;
+    use crate::Json;
 
     #[derive(Debug, Deserialize, Serialize, PartialEq)]
     struct TestySeDe {
