@@ -1,6 +1,6 @@
 [package]
 name = "freeform"
-version = "0.3.1"
+version = "0.4.0"
 repository = "https://github.com/Testare/freeform"
 authors = ["Testare <testare.i9z@gmail.com>"]
 edition = "2021"
@@ -10,7 +10,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy_reflect = "0.14"
+bevy_reflect = "0.15"
 serde = {version = "1.0.197", features = ["derive"]}
 thiserror = "1.0.58"
 typed_key = "0.1.1"

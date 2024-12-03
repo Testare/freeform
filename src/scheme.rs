@@ -2,6 +2,7 @@ use std::any::Any;
 use std::borrow::Borrow;
 use std::sync::Arc;
 
+use bevy_reflect::Reflect;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 #[cfg(feature = "toml")]
@@ -37,7 +38,7 @@ pub trait SerdeScheme: Clone + std::fmt::Debug + Default {
 }
 
 #[cfg(feature = "json")]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Reflect)]
 pub struct Json;
 
 #[cfg(feature = "json")]
@@ -55,7 +56,7 @@ impl SerdeScheme for Json {
 }
 
 #[cfg(feature = "ron")]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Reflect)]
 pub struct Ron;
 
 #[cfg(feature = "ron")]
@@ -73,7 +74,7 @@ impl SerdeScheme for Ron {
 }
 
 #[cfg(feature = "toml")]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Reflect)]
 pub struct Toml;
 
 /// Toml has different error types for serializing and deserializing, this wraps both of them
